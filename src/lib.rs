@@ -107,3 +107,122 @@ pub mod Cell {
         }
     }
 }
+
+/// _If you haven't read the [`Cell`] section, I recommend you do so before reading this
+/// section._
+///
+/// `RefCell` is very similar to `Cell` in that it provides _interior mutability_ for the value.
+/// The main difference is that `RefCell` allows us to get a reference to the inner value without
+/// having to move it out.
+///
+/// This is possible because `RefCell` keeps track of the number of active references to the inner
+/// value during runtime. This is done by using a `borrow` field of type i32. The value of this
+/// field can be one of the following:
+/// ```ignore
+/// match borrow {
+///     0          => no active references (UNUSED),
+///     x if x > 0 => number of shared references,
+///     x if x < 0 => number of exclusive references (can only be -1),
+/// }
+/// ```
+/// This is a simple way to count references and in this case, we can get away without any race or
+/// deadlock conditions. This is because `RefCell` is not marked as Sync (or Send). Without the
+/// Sync marker, the compiler guarentees that `RefCell` cannot be passed to a different thread
+/// which in turn guarentees that the `borrow` field can only be updated by one thread.
+///
+/// To demonstrate this, we will crate the same **immutable** struct as in the [`Cell`] section but
+/// this time we will use `RefCell` instead of `Cell`.
+/// - `regular`: just a regular i32
+/// - `special`: an i32 (which implements Copy) wrapped in RefCell
+/// - `special_nocopy`: a String (which does **not** implement Copy) wrapped in RefCell
+/// ```
+/// use std::cell::RefCell;
+///
+/// struct Immutable {
+///    regular: i32,
+///    special: RefCell<i32>,
+///    special_nocopy: RefCell<String>,
+/// }
+///
+/// let a = Immutable {
+///    regular: 1,
+///    special: RefCell::new(42),
+///    special_nocopy: RefCell::new("hi".to_string())
+/// };
+///```
+/// Once again, without marking `a` as `mut`, it is not possible to mutate any of the fields.
+/// ```compile_fail
+/// # use std::cell::RefCell;
+/// # let a = learning_cell::RefCell::Immutable::default();
+/// // Error: cannot mutate immutable variable `a`
+/// a.regular += 2;
+/// a.special = RefCell::new(24);
+/// ```
+/// But now we will start seeing some differences. First, we cannot use methods like `get` or `set`
+/// on `RefCell`. While we still have access to `swap`, `replace` and `take`, we will see that they
+/// can panic at runtime if we try to use them while the value is being borrowed.
+///
+/// Before we get into that, let's look at the `borrow` and `borrow_mut` methods. These methods
+/// allow us to get a reference to the inner value. The difference between the two is that
+/// `borrow_mut` returns a mutable reference while `borrow` returns an immutable reference.
+/// ```
+/// # use std::cell::RefCell;
+/// # let a = learning_cell::RefCell::Immutable::default();
+/// let refer = a.special.borrow();
+/// assert_eq!(*refer, 42);
+///
+/// let mut refer = a.special_nocopy.borrow_mut();
+/// *refer = "bye".to_string();
+/// ```
+///
+/// Now what happens if we try to mutuably borrow the value while it is already borrowed? Well, we
+/// will get a panic at runtime.
+/// ```should_panic
+/// # use std::cell::RefCell;
+/// # let a = learning_cell::RefCell::Immutable::default();
+/// let refer = a.special.borrow();
+/// // Panic: already borrowed: BorrowMutError
+/// let refer2 = a.special.borrow_mut();
+/// ```
+/// In fact this is the case for all the methods that try to take ownership of the inner value like
+/// `swap`, `replace` and `take`. If we try to use any of these methods while the value is already
+/// borrowed, we will get a panic at runtime.
+///
+/// And I want to emphasize that this is a **runtime panic** and not a compile time error. This
+/// code will compile just fine but if you try to run it, it will panic at runtime.
+/// This is because the compiler cannot know at compile time whether the value is already borrowed
+/// or not. This is why we need to be careful when using `RefCell`.
+///
+/// Thankfully, `RefCell` provides us with a way to check whether the value is already borrowed or
+/// not. This is done by using the `try_borrow` and `try_borrow_mut` methods. These methods return
+/// a `Result` which is either `Ok` if the value is not borrowed or `Err` if it is.
+/// ```
+/// # use std::cell::RefCell;
+/// # let a = learning_cell::RefCell::Immutable::default();
+/// let refer = a.special.try_borrow();
+/// assert!(refer.is_ok());
+/// let refer2 = a.special.try_borrow_mut();
+/// assert!(refer2.is_err());
+/// ```
+/// Funny enough, when you call `borrow` or `borrow_mut` on a `RefCell`, those methods actually
+/// call `try_borrow` and `try_borrow_mut` under the hood and panic if the result is `Err`.
+pub mod RefCell {
+    use std::cell::RefCell;
+
+    #[doc(hidden)]
+    pub struct Immutable {
+        pub regular: i32,
+        pub special: RefCell<i32>,
+        pub special_nocopy: RefCell<String>,
+    }
+
+    impl Default for Immutable {
+        fn default() -> Self {
+            Self {
+                regular: 1,
+                special: RefCell::new(42),
+                special_nocopy: RefCell::new("hi".to_string())
+            }
+        }
+    }
+}
